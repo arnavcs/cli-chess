@@ -1,6 +1,13 @@
 module Chess where
 
 import Data.List
+import Data.Char
+import Data.List.Index
+import Control.Applicative
+
+---------------------
+-- DATA STRUCTURES --
+---------------------
 
 data PieceType = King | Queen | Bishop | Knight | Rook | Pawn
     deriving (Read, Show, Eq)
@@ -9,6 +16,8 @@ data Color = White | Black
     deriving (Read, Show, Eq)
 
 type Position = (Int, Int)
+
+type Move = (Position, Position)
 
 data Piece = Piece { pieceColor :: Color,
                       pieceType :: PieceType,
@@ -24,8 +33,15 @@ data State = State {turn :: Color,
                    board :: Board}
     deriving (Read, Show, Eq)
 
+--------------------
+-- PRETTY DISPLAY --
+--------------------
+
 prettySandwich :: String -> String -> String -> [String] -> String
-prettySandwich lc ic rc = (\s -> lc ++ s ++ rc) . (intercalate ic)
+prettySandwich lc ic rc = (\ s -> lc ++ s ++ rc) . (intercalate ic)
+
+prettyPosition :: Position -> String
+prettyPosition (r, c) = (chr $ ord 'a' - 1 + r) : (intToDigit c) : []
 
 prettyPiece :: Piece -> String
 prettyPiece (Piece {pieceColor = White, pieceType = King  }) = "♔"
@@ -43,7 +59,7 @@ prettyPiece (Piece {pieceColor = Black, pieceType = Pawn  }) = "♟"
 
 prettyBoard :: Board -> String
 prettyBoard = (intercalate "\n")
-            . (\s -> [prettySandwich' "┌" "┬" "┐"] ++ s ++ [prettySandwich' "└" "┴" "┘"])
+            . (\ s -> [prettySandwich' "┌" "┬" "┐"] ++ s ++ [prettySandwich' "└" "┴" "┘"])
             . (intersperse (prettySandwich' "├" "┼" "┤"))
             . (map (prettySandwich "│" "│" "│"))
             . (map (map prettySquare))
@@ -54,6 +70,10 @@ prettyBoard = (intercalate "\n")
     prettySquare :: Square -> String
     prettySquare (Square _ Nothing)  = "   "
     prettySquare (Square _ (Just p)) = " " ++ prettyPiece p ++ " "
+
+-----------------
+-- DEFINITIONS --
+-----------------
 
 initialBoard :: Board
 initialBoard = [[Square (1, 8) (jp Black Rook), Square (2, 8) (jp Black Knight), Square (3, 8) (jp Black Bishop), Square (4, 8) (jp Black Queen), Square (5, 8) (jp Black King), Square (6, 8) (jp Black Bishop), Square (7, 8) (jp Black Knight), Square (8, 8) (jp Black Rook)]
@@ -67,3 +87,47 @@ initialBoard = [[Square (1, 8) (jp Black Rook), Square (2, 8) (jp Black Knight),
   where
     jp color pType = Just $ Piece {pieceColor = color, pieceType = pType, movedTwo = False}
 
+pieceValue :: Piece -> Int
+pieceValue (Piece {pieceType = Pawn})   = 1
+pieceValue (Piece {pieceType = Rook})   = 5
+pieceValue (Piece {pieceType = Knight}) = 3
+pieceValue (Piece {pieceType = Bishop}) = 3
+pieceValue (Piece {pieceType = Queen})  = 9
+pieceValue (Piece {pieceType = King})   = 0
+
+isValidPosition :: Position -> Bool
+isValidPosition = uncurry (&&) . both (\a -> a >= 1 && a <= 8)
+  where
+    both :: (a -> b) -> (a, a) -> (b, b)
+    both f (x, y) = (f x, f y)
+
+boardValue :: Color -> Board -> Int
+boardValue c = sum . map (\ (Square _ mp) -> maybe 0 colorPieceValue mp) . concat
+  where
+    colorPieceValue :: Piece -> Int
+    colorPieceValue p
+        | pieceColor p == c = pieceValue p
+        | otherwise         = 0
+
+boardEvaluation :: Board -> Int
+boardEvaluation = liftA2 (-) (boardValue White) (boardValue Black)
+
+colorPiecePositions :: Color -> Board -> [Position]
+colorPiecePositions c = map (\ (Square p _) -> p)
+                      . filter (\ (Square _ p) -> maybe False correctColor p)
+                      . concat
+  where
+    correctColor :: Piece -> Bool
+    correctColor p = c == pieceColor p
+
+getSquare :: Position -> Board -> Square
+getSquare (r, c) = (!! (c - 1)) . (!! (8 - r))
+
+-- isValidMove :: Move -> Bool
+-- 
+-- makeMove :: Move -> Board -> Board
+
+changeSquare :: Position -> Maybe Piece -> Board -> Board
+changeSquare (r, c) mp = (modifyAt (8 - r)
+                         (modifyAt (c - 1)
+                         (\ (Square p _) -> Square p mp)))
