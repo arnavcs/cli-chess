@@ -20,6 +20,7 @@ newtype Position = Position (Int, Int)
     deriving (Read, Show, Eq)
 
 data Move = SMove Position Position
+          | TMove Position
           | EPMove Position Position
           | CMove Position Position
           | PMove Position Position PieceType
@@ -101,8 +102,8 @@ setSquare :: Position -> Square -> Board -> Board
 setSquare (Position (r, c)) s = modifyAt r (setAt c s)
 
 -- returns if there is a piece on the given position of the board
-isPiece :: Position -> Bool
-isPiece = (/= Nothing) . (flip getSquare b)
+isPiece :: Position -> Board -> Bool
+isPiece p b = (/= Nothing) $ getSquare p b
 
 ----------------------
 -- QUERY FULFILLING --
@@ -132,8 +133,20 @@ piecePositions q b = filter ((maybe False (`satisfiesQuery` q))
                            . (flip getSquare b))
                    $ allPositions
 
+------------------------
+-- PIECE MANIPULATION --
+------------------------
+
+-- returns an identical piece where the moved field is true and the justMovedTwo field is false
+makeMoved :: Piece -> Piece
+makeMoved p = p {moved = True, justMovedTwo = False}
+
+-- returns an identical piece where the justMovedTwo and moved fields are true
+makeJustMovedTwo :: Piece -> Piece
+makeJustMovedTwo p = p {moved = True, justMovedTwo = True}
+
 -------------------
--- INITIAL BOARD --
+-- INITIAL SETUP --
 -------------------
 
 -- the board setup at the beginning of the game
@@ -149,6 +162,11 @@ initialBoard = [[jp Black Rook, jp Black Knight, jp Black Bishop, jp Black Queen
   where
     jp :: Color -> PieceType -> Square
     jp pc pt = Just $ tempPiece (MixedQuery pc pt)
+
+-- the initial game state at the beginning of the game
+initialState :: State
+initialState = State {turn  = White,
+                      board = initialBoard}
 
 ----------------------
 -- VALUE EVALUATION --
@@ -209,7 +227,7 @@ attackingPositions p b = maybe [] attackingPositionsHelper $ getSquare p b
     attackingPositionsHelper :: Piece -> [Position]
     attackingPositionsHelper = concat
                              . map (combineBroken
-                                  . break isPiece
+                                  . break (flip isPiece b)
                                   . catMaybes
                                   . map (shiftPosition p))
                              . pieceAttackingRange
@@ -238,6 +256,11 @@ isUnderCheck c b = isUnderAttack (head $ piecePositions (MixedQuery c King) b) b
 -- MOVE INTERACTION --
 ----------------------
 
+jumpTwoPosition :: Position -> Position
+jumpTwoPosition (Position (r, c))
+  | r < 4     = Position (3, r)
+  | otherwise = Position (4, r)
+
 -- returns the position of the piece taken during enpassant
 enpassantPosition :: Position -> Position -> Position
 enpassantPosition (Position (r, _)) (Position (_, c)) = Position (r, c)
@@ -249,45 +272,55 @@ castlingPositions (Position (r, c1)) (Position (_, c2))
   | otherwise = (Position (r, 0), Position (r, 3))
 
 -- returns the board after naively making the move described
--- todo: change the "moved" values of the pieces that are moved
--- todo: add a move2 move for pawns
 makeMoveUnsafe :: Move -> Board -> Board
 makeMoveUnsafe (SMove  pi pf)   b = setSquare pi Nothing
-                                  . setSquare pf (getSquare pi b)
+                                  . setSquare pf (fmap makeMoved $ getSquare pi b)
                                   $ b
+makeMoveUnsafe (TMove  pi)      b = let pf = jumpTwoPosition pi
+                                     in setSquare pi Nothing
+                                      . setSquare pf (fmap makeJustMovedTwo $ getSquare pi b)
+                                      $ b
 makeMoveUnsafe (EPMove pi pf)   b = let pc = enpassantPosition pi pf
                                      in setSquare pi Nothing
                                       . setSquare pc Nothing
-                                      . setSquare pf (getSquare pi b)
+                                      . setSquare pf (fmap makeMoved $ getSquare pi b)
                                       $ b
 makeMoveUnsafe (CMove  pi pf)   b = let (pe, pr) = castlingPositions pi pf
                                      in setSquare pi Nothing
                                       . setSquare pe Nothing
-                                      . setSquare pf (getSquare pi b)
-                                      . setSquare pr (getSquare pe b)
+                                      . setSquare pf (fmap makeMoved $ getSquare pi b)
+                                      . setSquare pr (fmap makeMoved $ getSquare pe b)
                                       $ b
 makeMoveUnsafe (PMove  pi pf p) b = let c = maybe White pieceColor $ getSquare pi b
                                      in setSquare pi Nothing
-                                      . setSquare pf (Just $ tempPiece (MixedQuery c p))
+                                      . setSquare pf (Just $ makeMoved . tempPiece $ MixedQuery c p)
                                       $ b
+
+-- returns the next color to play
+nextColor :: Color -> Color
+nextColor Black = White
+nextColor White = Black
 
 -- returns the valid moves for a given piece (including EPMove, SMove, CMove, and PMove)
 -- todo: write this function
-getMoves :: Position -> Board -> [Move]
-getMoves p b = []
--- getMoves p b = maybe Nothing pieceMoves $ getSquare p b
+validMoves :: Position -> Board -> [Move]
+validMoves p b = []
+-- validMoves p b = maybe Nothing pieceMoves $ getSquare p b
 --   where
 --     pieceMoves :: Piece -> [Move]
 --     pieceMoves p@(Piece {pieceType = Pawn}) =
 
 -- returns all the valid moves for the queried pieces
-getAllQueriedMoves :: PieceQuery -> Board -> [Move]
-getAllQueriedMoves pq b = concat . map (flip getMoves b) $ piecePositions pq b
+allQueriedPieceMoves :: PieceQuery -> Board -> [Move]
+allQueriedPieceMoves pq b = concat . map (flip validMoves b) $ piecePositions pq b
 
 -- returns all possible moves for the current game state
--- todo: write this function
-getStateMoves :: State -> [Move]
+stateMoves :: State -> [Move]
+stateMoves s = allQueriedPieceMoves (ColorQuery $ turn s) $ board s
 
 -- safely makes the move if it is valid, otherwise it returns nothing
--- todo: write this function
 makeMove :: Move -> State -> Maybe State
+makeMove m s = if notElem m $ stateMoves s
+             then Nothing
+             else Just $ s {turn  = nextColor $ turn s,
+                            board = makeMoveUnsafe m $ board s}
