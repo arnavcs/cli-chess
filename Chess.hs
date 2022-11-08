@@ -3,7 +3,6 @@ module Chess where
 import Data.List
 import Data.Char
 import Data.Maybe
-import Data.List.Index
 import Control.Applicative
 
 ----------------------
@@ -47,6 +46,17 @@ data PieceQuery = AllQuery
                 | MovedQuery Bool
                 | MixedQuery Color PieceType
     deriving (Read, Show, Eq)
+
+------------------------
+-- LIST MANIPULATIONS --
+------------------------
+
+modifyAt :: Int -> (a -> a) -> [a] -> [a]
+modifyAt 0 f (n:ns) = (f n):ns
+modifyAt k f ns     = (take k ns) ++ modifyAt 0 f (drop k ns)
+
+setAt :: Int -> a -> [a] -> [a]
+setAt k v ns = modifyAt k (const v) ns
 
 -----------------------
 -- PRETTY DISPLAYING --
@@ -408,3 +418,4 @@ makeMove m s = if notElem m $ stateMoves s
              then Nothing
              else Just $ s {turn  = otherColor $ turn s,
                             board = makeMoveUnsafe m $ board s}
+
