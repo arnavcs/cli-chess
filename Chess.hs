@@ -101,6 +101,19 @@ prettyBoard = (intercalate "\n")
     prettySandwich' :: String -> String -> String -> String
     prettySandwich' = (\ a b c -> prettySandwich a b c (replicate 8 "───") )
 
+-- returns the colors as strings
+prettyColor :: Color -> String
+prettyColor White = "white"
+prettyColor Black = "black"
+
+-- returns the state of the game as a string
+prettyState :: State -> String
+prettyState s = "\n"
+             ++ (prettyColor $ turn s)
+             ++ " to move\n\n"
+             ++ (prettyBoard $ board s)
+             ++ "\n"
+
 ---------------------
 -- BOARD ACCESSING --
 ---------------------
@@ -225,6 +238,10 @@ queryValue q b = sum
 boardEvaluation :: Board -> Int
 boardEvaluation = liftA2 (-) (queryValue $ ColorQuery White) (queryValue $ ColorQuery Black)
 
+-- returns the relative value of the board for the colour specified
+boardEvaluationColor :: Color -> Board -> Int
+boardEvaluationColor c = (\ b -> (if c == White then 1 else -1) * (boardEvaluation b))
+
 ------------------------
 -- POSITIONS ATTACKED --
 ------------------------
@@ -295,8 +312,8 @@ isUnderCheck c b = isUnderAttack (head $ piecePositions (MixedQuery c King) b) b
 
 jumpTwoPosition :: Position -> Position
 jumpTwoPosition (Position (r, c))
-  | r < 4     = Position (3, r)
-  | otherwise = Position (4, r)
+  | r < 4     = Position (3, c)
+  | otherwise = Position (4, c)
 
 -- returns the position of the piece taken during enpassant
 enpassantPosition :: Position -> Position -> Position
@@ -339,7 +356,6 @@ otherColor Black = White
 otherColor White = Black
 
 -- returns the valid moves for a given piece (including EPMove, SMove, CMove, and PMove)
--- TODO: reformatting
 validMoves :: Position -> Board -> [Move]
 validMoves p b = maybe [] (\ p' -> filter ( not
                                           . isUnderCheck (pieceColor p')
@@ -347,42 +363,70 @@ validMoves p b = maybe [] (\ p' -> filter ( not
                                  $ pieceMoves p')
                $ getSquare p b
   where
+    -- the possible moves that can be made by the piece
     pieceMoves :: Piece -> [Move]
-    pieceMoves p'@(Piece {pieceType = Pawn}) = ( filter (const . hasMoved False $ p) -- TMove
-                                               . map (\x -> TMove p)
-                                               . filter (flip areEmpty b)
-                                               . catMaybes
-                                               . map sequence
-                                               . map (map (shiftPosition p))
-                                               $ if pieceColor p' == White then [[(-1, 0), (-2, 0)]] else [[(1, 0), (2, 0)]] )
-                                            ++ ( concat                            -- SMove and PMove for pawns (no capturing)
-                                               . map (flip getPawnPSMoves $ pieceColor p')
-                                               . catMaybes
-                                               . map (shiftPosition p)
-                                               $ if pieceColor p' == White then [(-1, 0)] else [(1, 0)] )
-                                            ++ ( concat                            -- SMove and PMove for pawns (with capturing)
-                                               . map (flip getPawnPSMoves $ pieceColor p')
-                                               . filter (isColor $ otherColor (pieceColor p'))
-                                               . catMaybes
-                                               . map (shiftPosition p)
-                                               $ if pieceColor p' == White then [(-1, -1), (-1, 1)] else [(1, -1), (1, 1)] )
-                                            ++ ( map (\ x -> EPMove p x)           -- EPMove
-                                               . filter (\ x -> isEmpty x b
-                                                             && isColor (otherColor . pieceColor $ p') (enpassantPosition p x)
-                                                             && posSatisfiesQuery (enpassantPosition p x) b (MovedTwoQuery True))
-                                               . catMaybes
-                                               . map (shiftPosition p)
-                                               $ if pieceColor p' == White then [(-1, -1), (-1, 1)] else [(1, -1), (1, 1)] )
-    pieceMoves p'@(Piece {pieceType = King}) = ( map (\ x -> SMove p x) $ attackingPositions p b ) -- SMove
-                                            ++ ( map (\ x -> CMove p x)
-                                               . filter ( and
-                                                        . map (\ p -> not $ isUnderAttackByQuery p b (ColorQuery $ otherColor (pieceColor p')))
-                                                        . (\ x -> [p, x, fst $ castlingPositions p x, snd $ castlingPositions p x]))
-                                               . filter (hasMoved False . fst . castlingPositions p)
-                                               . filter (const . hasMoved False $ p)
-                                               . filter (const $ (p == Position (7, 4) || p == Position (0, 4)))
-                                               $ if pieceColor p' == White then [Position (7, 2), Position (7, 6)] else [Position (0, 2), Position (0, 6)] )
-    pieceMoves p'                            = map (\ x -> SMove p x) $ attackingPositions p b
+    pieceMoves p'@(Piece {pieceType = Pawn}) = concat
+                                             . fmap ($ p')
+                                             $ [pawnTMove,
+                                                pawnSPMoveNoCapture,
+                                                pawnSPMoveCapture,
+                                                pawnEPMove]
+    pieceMoves p'@(Piece {pieceType = King}) = concat
+                                             . fmap ($ p')
+                                             $ [pieceSMove,
+                                                kingCMove]
+    pieceMoves p'                            = pieceSMove p'
+
+    -- the moves that are standard "attcking position" moves for a piece
+    pieceSMove :: Piece -> [Move]
+    pieceSMove p' = map (\ x -> SMove p x) $ attackingPositions p b
+
+    -- the moves that are castling moves for the king
+    kingCMove :: Piece -> [Move]
+    kingCMove p' = map (\ x -> CMove p x)
+                 . filter ( and
+                          . map (\ p -> not $ isUnderAttackByQuery p b (ColorQuery $ otherColor (pieceColor p')))
+                          . (\ x -> [p, x, fst $ castlingPositions p x, snd $ castlingPositions p x]))
+                 . filter (hasMoved False . fst . castlingPositions p)
+                 . filter (const . hasMoved False $ p)
+                 . filter (const $ (p == Position (7, 4) || p == Position (0, 4)))
+                 $ if pieceColor p' == White then [Position (7, 2), Position (7, 6)] else [Position (0, 2), Position (0, 6)]
+
+    -- the moves that are inital jump by two moves for pawns
+    pawnTMove :: Piece -> [Move]
+    pawnTMove p' = filter (const . hasMoved False $ p)
+                 . map (\x -> TMove p)
+                 . filter (flip areEmpty b)
+                 . catMaybes
+                 . map sequence
+                 . map (map (shiftPosition p))
+                 $ if pieceColor p' == White then [[(-1, 0), (-2, 0)]] else [[(1, 0), (2, 0)]]
+
+    -- the moves that are promotion, or standard moves for pawns (without capturing)
+    pawnSPMoveNoCapture :: Piece -> [Move]
+    pawnSPMoveNoCapture p' = concat
+                           . map (flip getPawnPSMoves $ pieceColor p')
+                           . catMaybes
+                           . map (shiftPosition p)
+                           $ if pieceColor p' == White then [(-1, 0)] else [(1, 0)]
+
+    -- the moves that are promotion, or standard moves for pawns (with capturing)
+    pawnSPMoveCapture :: Piece -> [Move]
+    pawnSPMoveCapture p' = concat
+                         . map (flip getPawnPSMoves $ pieceColor p')
+                         . filter (isColor $ otherColor (pieceColor p'))
+                         . catMaybes
+                         . map (shiftPosition p)
+                         $ if pieceColor p' == White then [(-1, -1), (-1, 1)] else [(1, -1), (1, 1)]
+
+    -- the moves that are enpassant for pawns
+    pawnEPMove p' = map (\ x -> EPMove p x)
+                  . filter (\ x -> isEmpty x b
+                                && isColor (otherColor . pieceColor $ p') (enpassantPosition p x)
+                                && posSatisfiesQuery (enpassantPosition p x) b (MovedTwoQuery True))
+                  . catMaybes
+                  . map (shiftPosition p)
+                  $ if pieceColor p' == White then [(-1, -1), (-1, 1)] else [(1, -1), (1, 1)]
 
     -- returns true if the given relative positions are all empty and valid positions
     areEmptyRel :: [(Int, Int)] -> Bool
@@ -415,7 +459,7 @@ stateMoves s = allQueriedPieceMoves (ColorQuery $ turn s) $ board s
 -- safely makes the move if it is valid, otherwise it returns nothing
 makeMove :: Move -> State -> Maybe State
 makeMove m s = if notElem m $ stateMoves s
-             then Nothing
-             else Just $ s {turn  = otherColor $ turn s,
-                            board = makeMoveUnsafe m $ board s}
+               then Nothing
+               else Just $ s {turn  = otherColor       $ turn  s,
+                              board = makeMoveUnsafe m $ board s}
 
