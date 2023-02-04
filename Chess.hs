@@ -214,34 +214,6 @@ initialState :: State
 initialState = State {turn  = White,
                       board = initialBoard}
 
-----------------------
--- VALUE EVALUATION --
-----------------------
-
--- the value of a given piece
-pieceValue :: Piece -> Int
-pieceValue (Piece {pieceType = Pawn})   = 1
-pieceValue (Piece {pieceType = Rook})   = 5
-pieceValue (Piece {pieceType = Knight}) = 3
-pieceValue (Piece {pieceType = Bishop}) = 3
-pieceValue (Piece {pieceType = Queen})  = 9
-pieceValue (Piece {pieceType = King})   = 0
-
--- the total value of the pieces satifying the query
-queryValue :: PieceQuery -> Board -> Int
-queryValue q b = sum
-               . map ((maybe 0 pieceValue) . (flip getSquare b))
-               . piecePositions q
-               $ b
-
--- returns the difference in value on the board between the white and black player
-boardEvaluation :: Board -> Int
-boardEvaluation = liftA2 (-) (queryValue $ ColorQuery White) (queryValue $ ColorQuery Black)
-
--- returns the relative value of the board for the colour specified
-boardEvaluationColor :: Color -> Board -> Int
-boardEvaluationColor c = (\ b -> (if c == White then 1 else -1) * (boardEvaluation b))
-
 ------------------------
 -- POSITIONS ATTACKED --
 ------------------------
